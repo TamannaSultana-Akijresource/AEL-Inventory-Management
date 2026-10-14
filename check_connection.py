@@ -11,12 +11,28 @@ from __future__ import annotations
 
 import sys
 
+import gateway_client
 from db import _connect, config_is_complete, get_config
 
 
+def check_gateway() -> None:
+    print("Enterprise API gateway")
+    cfg = gateway_client.get_config()
+    print(gateway_client.describe(cfg))
+    if not gateway_client.config_is_complete(cfg):
+        print("Result: gateway not configured (see [gateway] in secrets.toml)\n")
+        return
+    try:
+        print("Result: " + gateway_client.ping() + "\n")
+    except Exception as exc:  # noqa: BLE001
+        print(f"Result: gateway FAILED -> {str(exc)[:300]}\n")
+
+
 def main() -> int:
+    check_gateway()
+
     cfg = get_config()
-    print("Resolved configuration")
+    print("Direct SQL Server (optional)")
     print(f"  host     : {cfg['host'] or '(missing)'}")
     print(f"  port     : {cfg['port']}")
     print(f"  database : {cfg['database'] or '(missing)'}")

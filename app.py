@@ -20,6 +20,8 @@ import streamlit as st
 
 import config as C
 import dashboard
+import gateway_client
+import gateway_source
 import github_publish
 from db import config_is_complete, get_config, heartbeat, run_query
 from queries import DETAIL_SQL, SUMMARY_SQL
@@ -89,13 +91,13 @@ def inject_css() -> None:
 # Data access
 # ---------------------------------------------------------------------------
 @st.cache_data(ttl=C.CACHE_TTL, show_spinner=False)
-def load_summary(start: str, end: str, _bust: int = 0) -> pd.DataFrame:
-    return dashboard.prepare_summary(run_query(SUMMARY_SQL, {"start": start, "end": end}))
-
-
-@st.cache_data(ttl=C.CACHE_TTL, show_spinner=False)
-def load_detail(start: str, end: str, _bust: int = 0) -> pd.DataFrame:
-    return dashboard.prepare_detail(run_query(DETAIL_SQL, {"start": start, "end": end}))
+def load_data(start: str, end: str, source: str, _bust: int = 0):
+    if source == "gateway":
+        raw_summary, raw_detail = gateway_source.load_live(start, end)
+    else:
+        raw_summary = run_query(SUMMARY_SQL, {"start": start, "end": end})
+        raw_detail = run_query(DETAIL_SQL, {"start": start, "end": end})
+    return dashboard.prepare_summary(raw_summary), dashboard.prepare_detail(raw_detail)
 
 
 # ---------------------------------------------------------------------------
@@ -181,13 +183,23 @@ def main() -> None:
     st.session_state.setdefault("bust", 0)
     st.session_state.setdefault("last_refresh", datetime.now(TZ))
 
-    cfg = get_config()
-    if not config_is_complete(cfg):
-        st.error(
-            "Database credentials are not configured. Add an **[mssql]** section to "
-            "`.streamlit/secrets.toml`, or set DWH_* environment variables."
-        )
-        st.stop()
+    st.sidebar.markdown("### Data source")
+    source = st.sidebar.radio(
+        "Data source", ["gateway", "sql"],
+        format_func=lambda s: "API gateway (recommended)" if s == "gateway" else "Direct SQL Server",
+        label_visibility="collapsed",
+    )
+    if source == "gateway":
+        if not gateway_client.config_is_complete():
+            st.error("Gateway credentials are not configured. Add a **[gateway]** section "
+                     "to `.streamlit/secrets.toml` (url + token).")
+            st.stop()
+    else:
+        cfg = get_config()
+        if not config_is_complete(cfg):
+            st.error("Database credentials are not configured. Add an **[mssql]** section "
+                     "to `.streamlit/secrets.toml`, or set DWH_* environment variables.")
+            st.stop()
 
     now = datetime.now(TZ)
     start, end = dashboard.month_bounds(now.date())
@@ -218,17 +230,20 @@ def main() -> None:
         st.session_state.last_refresh = datetime.now(TZ)
         st.rerun()
 
-    srv = heartbeat()
-    st.sidebar.caption(
-        f"Connected - {cfg['host']} / {cfg['database']}"
-        + (f"\n\nServer clock: {srv:%d %b %Y %H:%M}" if srv is not None else "")
-    )
+    if source == "gateway":
+        gcfg = gateway_client.get_config()
+        st.sidebar.caption(f"Connected - gateway\n\n{gcfg['url']}")
+    else:
+        srv = heartbeat()
+        st.sidebar.caption(
+            f"Connected - {cfg['host']} / {cfg['database']}"
+            + (f"\n\nServer clock: {srv:%d %b %Y %H:%M}" if srv is not None else "")
+        )
     st.sidebar.divider()
 
     try:
         with st.spinner("Querying DWH..."):
-            summary = load_summary(start, end, st.session_state.bust)
-            detail = load_detail(start, end, st.session_state.bust)
+            summary, detail = load_data(start, end, source, st.session_state.bust)
     except Exception as exc:  # noqa: BLE001
         st.error(f"Query failed: {exc}")
         st.stop()

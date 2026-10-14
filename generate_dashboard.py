@@ -26,8 +26,10 @@ from zoneinfo import ZoneInfo
 import config as C
 import dashboard
 import db
+import gateway_source
 import github_publish
 from queries import DETAIL_SQL, SUMMARY_SQL
+
 
 try:  # make console output safe on Windows code pages
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -49,10 +51,14 @@ def log(msg: str) -> None:
 # ---------------------------------------------------------------------------
 # Data sources
 # ---------------------------------------------------------------------------
-def load_live(start: str, end: str):
-    log(f"Querying DWH for window {start} -> {end} ...")
-    raw_summary = db.run_query(SUMMARY_SQL, {"start": start, "end": end})
-    raw_detail = db.run_query(DETAIL_SQL, {"start": start, "end": end})
+def load_live(start: str, end: str, source: str = "gateway"):
+    if source == "sql":
+        log(f"Querying DWH directly (pyodbc) for window {start} -> {end} ...")
+        raw_summary = db.run_query(SUMMARY_SQL, {"start": start, "end": end})
+        raw_detail = db.run_query(DETAIL_SQL, {"start": start, "end": end})
+    else:
+        log(f"Querying DWH via the enterprise API gateway for window {start} -> {end} ...")
+        raw_summary, raw_detail = gateway_source.load_live(start, end)
     summary = dashboard.prepare_summary(raw_summary)
     detail = dashboard.prepare_detail(raw_detail)
     log(f"Loaded {len(summary):,} summary lines and {len(detail):,} order lines.")
@@ -140,6 +146,8 @@ def write_outputs(html_text: str, generated_at: datetime) -> tuple[str, str]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Generate and publish the AEL dashboard.")
     ap.add_argument("--demo", action="store_true", help="use synthetic data (offline)")
+    ap.add_argument("--source", choices=["gateway", "sql"], default="gateway",
+                    help="live data path: MCP gateway (default) or direct SQL")
     ap.add_argument("--push", action="store_true", help="push index.html to GitHub")
     ap.add_argument("--date", help="treat this ISO date as 'today' (default: now in Dhaka)")
     ap.add_argument("--open", action="store_true", help="open the report in a browser")
@@ -148,14 +156,15 @@ def main(argv: list[str] | None = None) -> int:
     tz = ZoneInfo(C.TZ_NAME)
     today = date.fromisoformat(args.date) if args.date else datetime.now(tz).date()
     start, end = dashboard.month_bounds(today)
-    log(f"=== AEL dashboard run ({'DEMO' if args.demo else 'LIVE'}) window {start} -> {end} ===")
+    mode = "DEMO" if args.demo else f"LIVE/{args.source}"
+    log(f"=== AEL dashboard run ({mode}) window {start} -> {end} ===")
 
     try:
         if args.demo:
             summary, detail = load_demo(start, end)
             fallback = False
         else:
-            summary, detail = load_live(start, end)
+            summary, detail = load_live(start, end, args.source)
             fallback = False
     except Exception as exc:  # noqa: BLE001
         log(f"Live data load failed: {exc}")
