@@ -1,0 +1,5 @@
+pandas>=2.0
+numpy>=1.24
+pyodbc>=5.0
+streamlit>=1.37
+altair>=5.0

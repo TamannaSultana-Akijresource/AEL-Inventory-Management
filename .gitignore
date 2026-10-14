@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Secrets - never commit credentials
+.streamlit/secrets.toml
+
+# Runtime output
+logs/
+html_exports/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
