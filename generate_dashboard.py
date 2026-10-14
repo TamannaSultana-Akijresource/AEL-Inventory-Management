@@ -153,16 +153,19 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.demo:
             summary, detail = load_demo(start, end)
+            fallback = False
         else:
             summary, detail = load_live(start, end)
+            fallback = False
     except Exception as exc:  # noqa: BLE001
-        log(f"Data load failed: {exc}")
-        if not args.demo:
-            log("Falling back to DEMO data so a dashboard is still produced.")
-            summary, detail = load_demo(start, end)
-            args.demo = True
-        else:
+        log(f"Live data load failed: {exc}")
+        if args.demo:
             return 2
+        log("Falling back to DEMO data so a dashboard is still produced locally.")
+        log("The DEMO dashboard will NOT be pushed to GitHub - fix credentials, then re-run.")
+        summary, detail = load_demo(start, end)
+        args.demo = True
+        fallback = True
 
     if summary is None or summary.empty:
         log("No rows returned for the current window. Nothing written.")
@@ -181,6 +184,10 @@ def main(argv: list[str] | None = None) -> int:
             webbrowser.open(index_path)
         except Exception:
             pass
+
+    if args.push and fallback:
+        log("Skipping GitHub push: only DEMO data is available this run.")
+        return 5
 
     if args.push:
         log("Publishing to GitHub ...")
